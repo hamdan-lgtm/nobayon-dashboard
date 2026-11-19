@@ -185,7 +185,10 @@ age_text = (
     if age is not None and age < STALE_MINUTES
     else (f"{age / 60:.1f} h ago" if age else "")
 )
-st.sidebar.caption(f"Workbook updated {loaded} · {age_text}")
+if GOOGLE_SHEET_ID:
+    st.sidebar.caption("Source: Google Sheets · reloads hourly, or press Refresh data")
+else:
+    st.sidebar.caption(f"Workbook updated {loaded} · {age_text}")
 
 # --- period --- #
 st.sidebar.divider()

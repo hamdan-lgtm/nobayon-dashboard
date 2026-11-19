@@ -227,7 +227,7 @@ def dataset_path(path: str | Path | None = None) -> Path:
 
 def db_signature(path: str | Path | None = None) -> float:
     """Cache key. Google Sheets has no file mtime, so refresh it on an hourly bucket."""
-    if GOOGLE_SHEET_ID and path is None:
+    if GOOGLE_SHEET_ID:
         return float(pd.Timestamp.now().floor("h").timestamp())
     try:
         return float(dataset_path(path).stat().st_mtime)
