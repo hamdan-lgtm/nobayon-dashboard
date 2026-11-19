@@ -1,0 +1,46 @@
+name: validate-data
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.py"
+      - "requirements.txt"
+      - "targets.csv"
+      - "product_targets.csv"
+      - ".github/workflows/validate_data.yml"
+  pull_request:
+    paths:
+      - "**/*.py"
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      MASTER_EXCEL_PATH: dashboard database.xlsx
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile modules
+        run: |
+          python -m py_compile streamlit_app.py refresh_pipeline.py \
+            utils/data_pipeline.py pages/1_overview.py pages/2_analysis.py pages/3_detail.py
+
+      - name: Validate workbook (skipped when the data file is not committed)
+        run: |
+          if [ -f "dashboard database.xlsx" ]; then
+            python refresh_pipeline.py --no-git --no-excel
+          else
+            echo "No workbook in the repo - skipping data validation (app reads the shared drive copy)."
+          fi

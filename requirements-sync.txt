@@ -1,0 +1,4 @@
+# Extra packages for the PC that pushes data to Google Sheets.
+# The Streamlit app itself does NOT need these (it reads the sheet as CSV).
+gspread>=6.0
+google-auth>=2.30
