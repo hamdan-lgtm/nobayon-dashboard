@@ -186,7 +186,7 @@ age_text = (
     else (f"{age / 60:.1f} h ago" if age else "")
 )
 if GOOGLE_SHEET_ID:
-    st.sidebar.caption("Source: Google Sheets · reloads hourly, or press Refresh data")
+    st.sidebar.caption("Source: Google Sheets · reloads every 15 min, or press Refresh data")
 else:
     st.sidebar.caption(f"Workbook updated {loaded} · {age_text}")
 

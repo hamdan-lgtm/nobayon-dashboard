@@ -226,9 +226,9 @@ def dataset_path(path: str | Path | None = None) -> Path:
 
 
 def db_signature(path: str | Path | None = None) -> float:
-    """Cache key. Google Sheets has no file mtime, so refresh it on an hourly bucket."""
+    """Cache key. Google Sheets has no file mtime, so roll the cache every 15 minutes."""
     if GOOGLE_SHEET_ID:
-        return float(pd.Timestamp.now().floor("h").timestamp())
+        return float(pd.Timestamp.now().floor("15min").timestamp())
     try:
         return float(dataset_path(path).stat().st_mtime)
     except OSError:
