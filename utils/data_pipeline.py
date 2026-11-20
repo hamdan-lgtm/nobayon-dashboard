@@ -330,6 +330,9 @@ def _read_google_sheet(sheet: str) -> pd.DataFrame:
             ) from exc
 
     frame.columns = [clean_text(col) for col in frame.columns]
+    # gspread returns "" for empty cells where read_csv returns NaN - align the two paths.
+    if frame.isin([""]).any().any():
+        frame = frame.replace(r"^\s*$", np.nan, regex=True)
     # Mixed date strings (ISO text from Apps Script, locale text from a converted workbook).
     for column in frame.columns:
         if str(column).strip().lower() in {"date", "as_at"}:
@@ -363,7 +366,10 @@ def _build_sales(raw: pd.DataFrame) -> pd.DataFrame:
     partner = clean_series(raw.get("Type."))
     frame["Partner"] = partner.where(partner.isin(["AAFL", "AEL", "Customer"]), "Customer")
     frame["Volume MT"] = uom_to_mt(frame["Quantity"], frame["UoM"])
-    frame["Is Return"] = (frame["Quantity"] < 0) | (frame["Sales Value"] < 0) | raw.get("Return_Issue", pd.Series()).notna()
+    return_flag = pd.Series(False, index=frame.index)
+    if "Return_Issue" in raw:
+        return_flag = clean_series(raw["Return_Issue"]).ne("")
+    frame["Is Return"] = (frame["Quantity"] < 0) | (frame["Sales Value"] < 0) | return_flag
     frame["Year"] = frame["Date"].dt.year.astype("Int64")
     frame["Month"] = frame["Date"].dt.month.astype("Int64")
     return frame
@@ -683,8 +689,13 @@ def validate_pipeline(dataset: dict[str, Any]) -> list[dict[str, str]]:
     stock = dataset.get("stock", pd.DataFrame())
 
     missing = dataset.get("missing_sheets") or []
-    bits = [f"{sheet}={len(dataset.get(key, pd.DataFrame())):,}" for key, sheet in zip(
-        ("sales", "cogs", "collection", "aging", "stock"), CORE_SHEETS)]
+    bits = [
+        f"SO_DO_Database={len(sales):,}",
+        f"Collection={len(collection):,}",
+        f"COGS_Database={len(cogs):,}",
+        f"Aging_Database={len(aging):,}",
+        f"Stock_Database={len(stock):,}",
+    ]
     checks.append(
         _check(
             "Core sheets loaded",
