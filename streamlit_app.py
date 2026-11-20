@@ -17,6 +17,7 @@ from utils.data_pipeline import (
     MONTH_NAMES,
     ROOT,
     GOOGLE_SHEET_ID,
+    google_auth_mode,
     available_districts,
     available_periods,
     available_products,
@@ -277,6 +278,11 @@ st.sidebar.markdown(status_pill_html(overall_status(checks),
                                      f"{summary.get('PASS', 0)} pass · {summary.get('WARN', 0)} alert · {summary.get('FAIL', 0)} fail"),
                     unsafe_allow_html=True)
 st.sidebar.caption(f"Source: {'Google Sheets · ' + GOOGLE_SHEET_ID if GOOGLE_SHEET_ID else DB_FILE.name}")
+if GOOGLE_SHEET_ID:
+    if google_auth_mode() == "service-account":
+        st.sidebar.caption("Access: private · service account")
+    else:
+        st.sidebar.caption("Access: public link — add SHEETS_CREDENTIALS to make it private")
 if age is not None and age > STALE_MINUTES:
     st.sidebar.warning(f"Data is {age / 60:.1f} h old, press Refresh data.", icon="⏳")
 

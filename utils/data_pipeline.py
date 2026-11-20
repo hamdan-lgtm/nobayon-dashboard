@@ -9,6 +9,7 @@ The module never writes to the source workbook.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import textwrap
@@ -170,7 +171,13 @@ def clean_series(series: pd.Series | None) -> pd.Series:
 def to_number(series: pd.Series | None) -> pd.Series:
     if series is None:
         return pd.Series(dtype="float64")
-    return pd.to_numeric(series, errors="coerce").astype("float64")
+    # Sheets/Excel can hand back "1,234.56" when a cell carries a thousands separator.
+    text = (
+        series.astype("string")
+        .str.replace(",", "", regex=False)
+        .str.replace("\u00a0", "", regex=False)
+    )
+    return pd.to_numeric(text, errors="coerce").astype("float64")
 
 
 def to_date(series: pd.Series | None) -> pd.Series:
@@ -212,6 +219,53 @@ def _setting(name: str, default: str = "") -> str:
 GOOGLE_SHEET_ID = _setting("GOOGLE_SHEET_ID")
 
 
+def _google_service_account() -> dict[str, Any] | None:
+    """Service-account JSON: environment variable, secret string, or a [gcp_service_account] table."""
+    raw = os.environ.get("SHEETS_CREDENTIALS") or os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if raw:
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+
+    try:
+        value = st.secrets.get("SHEETS_CREDENTIALS")  # type: ignore[union-attr]
+    except Exception:
+        value = None
+    if isinstance(value, dict):
+        return dict(value)
+    if value:
+        try:
+            return json.loads(str(value))
+        except json.JSONDecodeError:
+            return None
+
+    try:
+        if "gcp_service_account" in st.secrets:  # type: ignore[union-attr]
+            return dict(st.secrets["gcp_service_account"])
+    except Exception:
+        pass
+    return None
+
+
+def google_auth_mode() -> str:
+    """'service-account' when the sheet is read privately, 'public-link' when it is not."""
+    if not GOOGLE_SHEET_ID:
+        return "none"
+    return "service-account" if _google_service_account() else "public-link"
+
+
+@st.cache_resource(show_spinner=False)
+def _google_sheet_client(credentials_json: str):
+    """Authorised gspread client, built once per session."""
+    import gspread
+    from google.oauth2.service_account import Credentials
+
+    info = json.loads(credentials_json)
+    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    return gspread.authorize(Credentials.from_service_account_info(info, scopes=scopes))
+
+
 def dataset_path(path: str | Path | None = None) -> Path:
     """Explicit path → MASTER_EXCEL_PATH → local copy → the Business_dashboard source."""
     if path is not None:
@@ -242,13 +296,41 @@ def _read_sheet(path: Path, sheet: str) -> pd.DataFrame:
 
 
 def _read_google_sheet(sheet: str) -> pd.DataFrame:
-    """Read one tab of a Google Sheet published as CSV (File → Share → Anyone with the link)."""
-    from urllib.parse import quote
+    """Read one tab of the live Google Sheet.
 
-    url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet={quote(sheet)}"
-    frame = pd.read_csv(url, dtype=object)
+    Preferred path: the sheet is private and read with a service account.
+    Fallback path: the sheet is shared "anyone with the link" and read as CSV.
+    Both produce the same frame, so nothing downstream changes.
+    """
+    info = _google_service_account()
+
+    if info:
+        client = _google_sheet_client(json.dumps(info, sort_keys=True))
+        worksheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet(sheet)
+        values = worksheet.get_values(
+            value_render_option="UNFORMATTED_VALUE",
+            date_time_render_option="FORMATTED_STRING",
+        )
+        if not values:
+            return pd.DataFrame()
+        header = [clean_text(col) for col in values[0]]
+        width = len(header)
+        rows = [row + [""] * (width - len(row)) if len(row) < width else row[:width] for row in values[1:]]
+        frame = pd.DataFrame(rows, columns=header)
+    else:
+        from urllib.parse import quote
+
+        url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet={quote(sheet)}"
+        try:
+            frame = pd.read_csv(url, dtype=object)
+        except Exception as exc:  # private sheet + no credentials
+            raise RuntimeError(
+                f"Cannot read the '{sheet}' tab. The sheet is no longer public: add a service "
+                f"account to Streamlit secrets as SHEETS_CREDENTIALS and share the sheet with it."
+            ) from exc
+
     frame.columns = [clean_text(col) for col in frame.columns]
-    # gviz returns mixed date strings - normalise them once so the builders never guess.
+    # Mixed date strings (ISO text from Apps Script, locale text from a converted workbook).
     for column in frame.columns:
         if str(column).strip().lower() in {"date", "as_at"}:
             frame[column] = pd.to_datetime(frame[column], errors="coerce", format="mixed").dt.strftime("%Y-%m-%d")
